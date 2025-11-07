@@ -2,10 +2,12 @@
  *
  * @file interrupts.cpp
  * @author Sasisekhar Govind
- *
+ * @author Dearell Tobenna Ezeoke
+ * @author Mofiopeluwa Olatunji
  */
 
-#include<interrupts.hpp>
+#include"interrupts.hpp"
+#include <tuple>
 
 std::tuple<std::string, std::string, int> simulate_trace(std::vector<std::string> trace_file, int time, std::vector<std::string> vectors, std::vector<int> delays, std::vector<external_file> external_files, PCB current, std::vector<PCB> wait_queue) {
 
@@ -50,6 +52,26 @@ std::tuple<std::string, std::string, int> simulate_trace(std::vector<std::string
 
             ///////////////////////////////////////////////////////////////////////////////////////////
             //Add your FORK output here
+            {
+                // first, it clones the pcb
+                execution += std::to_string(current_time) + ", " +  std::to_string(duration_intr) + ", cloning the PCB\n";
+                current_time += duration_intr;
+
+                // the parent then has to wait for the child to run first
+                PCB parent_after = current;
+                PCB child(current.PID + 1, current.PPID,current.program_name, current.size, current.partition_number);
+                current = child;
+                wait_queue.push_back(parent_after);
+
+                // scheduler and iret come in
+                execution += std::to_string(current_time) + ", 0, scheduler called\n";
+                execution += std::to_string(current_time) + ", 1, IRET\n";
+                current_time += 1;
+
+                system_status += "time: " + std::to_string(current_time) + "; current trace: " + trace + "\n";
+                system_status += print_PCB(current, wait_queue);
+                system_status += "\n";
+            }
 
 
 
@@ -91,8 +113,19 @@ std::tuple<std::string, std::string, int> simulate_trace(std::vector<std::string
 
             ///////////////////////////////////////////////////////////////////////////////////////////
             //With the child's trace, run the child (HINT: think recursion)
+            {
+                auto [child_exec, child_sys, child_end] =
+                    simulate_trace(child_trace, current_time, vectors, delays, external_files, current, wait_queue);
+                execution     += child_exec;
+                system_status += child_sys;
+                current_time   = child_end;
 
-
+                // when the child is done, the parent resumes
+                if (!wait_queue.empty()) {
+                    current = wait_queue.back();
+                    wait_queue.pop_back();
+                }
+            }
 
             ///////////////////////////////////////////////////////////////////////////////////////////
 
@@ -104,8 +137,37 @@ std::tuple<std::string, std::string, int> simulate_trace(std::vector<std::string
 
             ///////////////////////////////////////////////////////////////////////////////////////////
             //Add your EXEC output here
+            {
+            
+                int size_mb = static_cast<int>(get_size(program_name, external_files));
 
+                execution += std::to_string(current_time) + ", " +  std::to_string(duration_intr) +  ", Program is " + std::to_string(size_mb) + " Mb large\n";
+                current_time += duration_intr;
+                
+                int loader_ms = size_mb * 15;
+                if (loader_ms < 0) loader_ms = 0;
+                execution += std::to_string(current_time) + ", " +  std::to_string(loader_ms) + ", loading program into memory\n";
+                current_time += loader_ms;
+               
+                execution += std::to_string(current_time) + ", 5, marking partition as occupied\n";
+                current_time += 5;
 
+                current.program_name = program_name;
+                current.size = static_cast<unsigned int>(size_mb);
+                (void)allocate_memory(&current);
+                // This updates the pcb
+                execution += std::to_string(current_time) + ", 3, updating PCB\n";
+                current_time += 3;
+
+                // scheduler and iret come in again
+                execution += std::to_string(current_time) + ", 0, scheduler called\n";
+                execution += std::to_string(current_time) + ", 1, IRET\n";
+                current_time += 1;
+
+                system_status += "time: " + std::to_string(current_time) + "; current trace: EXEC " + program_name + "\n";
+                system_status += print_PCB(current, wait_queue);
+                system_status += "\n";
+            }
 
             ///////////////////////////////////////////////////////////////////////////////////////////
 
@@ -120,8 +182,13 @@ std::tuple<std::string, std::string, int> simulate_trace(std::vector<std::string
 
             ///////////////////////////////////////////////////////////////////////////////////////////
             //With the exec's trace (i.e. trace of external program), run the exec (HINT: think recursion)
-
-
+            {
+                auto [e_exec, e_sys, e_end] =
+                    simulate_trace(exec_traces, current_time, vectors, delays, external_files, current, wait_queue);
+                execution     += e_exec;
+                system_status += e_sys;
+                current_time   = e_end;
+            }
 
             ///////////////////////////////////////////////////////////////////////////////////////////
 
@@ -138,7 +205,7 @@ int main(int argc, char** argv) {
     //vectors is a C++ std::vector of strings that contain the address of the ISR
     //delays  is a C++ std::vector of ints that contain the delays of each device
     //the index of these elemens is the device number, starting from 0
-    //external_files is a C++ std::vector of the struct 'external_file'. Check the struct in 
+    //external_files is a C++ std::vector of the struct 'external_file'. Check the struct in
     //interrupt.hpp to know more.
     auto [vectors, delays, external_files] = parse_args(argc, argv);
     std::ifstream input_file(argv[1]);
@@ -167,12 +234,12 @@ int main(int argc, char** argv) {
         trace_file.push_back(trace);
     }
 
-    auto [execution, system_status, _] = simulate_trace(   trace_file, 
-                                            0, 
-                                            vectors, 
+    auto [execution, system_status, _] = simulate_trace(   trace_file,
+                                            0,
+                                            vectors,
                                             delays,
-                                            external_files, 
-                                            current, 
+                                            external_files,
+                                            current,
                                             wait_queue);
 
     input_file.close();
